@@ -1,0 +1,107 @@
+---
+title: "Untitled"
+output: html_document
+date: "2023-03-31"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#==forecasting quantities based on nested models
+#==generate data
+set.seed(44)
+
+#==simulated sst
+sst <- scale(arima.sim(list(order = c(1,1,0), ar = 0.3), n = 200))
+#==break into a historical period and a projected period
+hist_sst <- sst[1:100]
+proj_sst <- sst[101:200]
+
+```
+
+```{r}
+#==simulate microphytoplankton from sst using a quadratic relationship
+micro_p <- scale(hist_sst+hist_sst^2+rnorm(length(hist_sst),0,1))
+
+#==simulate cpue from microphytoplankton using a saturating relationship
+cpue<- scale(micro_p / (1.01*max(micro_p)+micro_p))+rnorm(length(hist_sst),0,1)
+
+#==show the relationship between sst and micro_p
+par(mfrow=c(2,1),mar=c(3,3,1,1))
+plot(micro_p~hist_sst)
+plot(cpue~micro_p)
+```
+
+```{r}
+#==make a model for micro_p based on observed sst
+library(mgcv)
+micro_p_mod<-gam(micro_p~s(hist_sst))
+
+#==check model and fits
+summary(micro_p_mod)
+plot(micro_p_mod)
+micro_p_pred<-predict(micro_p_mod)
+plot(micro_p,type='b')
+lines(micro_p_pred,col=2,lwd=2)
+gam.check(micro_p_mod)
+```
+
+```{r}
+#==make a model for cpue based on micro_p
+cpue_mod<-gam(cpue~s(micro_p))
+
+#==check model and fits
+summary(cpue_mod)
+plot(cpue_mod)
+cpue_pred<-predict(cpue_mod)
+plot(cpue,type='b')
+lines(cpue_pred,col=2,lwd=2)
+gam.check(cpue_mod)
+```
+
+```{r}
+#==predict future micro_p based on projected sst and micro_p_mod
+proj_micro_p<-predict(micro_p_mod,newdata=data.frame(hist_sst=proj_sst),se=TRUE)
+
+#==input predicted future micro_p into cpue_mod
+#==note that this does not propagate the uncertainty from proj_micro_p
+#==one way to do that would be to simulate many time series of projected micro p
+#==using the covariance matrix that comes out of the model fitting
+#==then make many calls to predict, using those time series
+#==didn't do that because it will take time, but you get the idea
+proj_cpue<-predict(cpue_mod,newdata=data.frame(micro_p=proj_micro_p$fit),se=TRUE)
+plot_cpue_se_up<-proj_cpue$fit + 1.96*proj_cpue$se.fit
+plot_cpue_se_dn<-proj_cpue$fit - 1.96*proj_cpue$se.fit
+
+#==see that the projected cpue is a non-linear function (estimated from cpue_mod)
+#==tricky things happen when the projections are beyond the historical observations (fiddle with different numbers for set.seed to see examples)
+par(mfrow=c(1,1))
+plot(proj_cpue$fit~proj_micro_p$fit)
+```
+
+
+
+```{r}
+
+#==plot observed and projected cpue based on projections of SST
+#==the predicted CIs will be too small because the uncertainty from micro_p_mod is not propagated
+#==also note that prediction intervals instead of confidence intervals would be the appropriate thing to show for forecasting
+par(mfrow=c(3,1),mar=c(.1,.1,.1,.1),oma=c(4,4,1,1))
+plot(sst,col=2,type='b',pch=16,xaxt='n',las=1)
+lines(hist_sst,pch=16,type='b')
+legend("topright",bty='n',legend=c("Historical","Projected"),col=c(1,2),pch=16)
+legend("topleft",bty='n',legend=c("SST"))
+plot(c(micro_p,proj_micro_p$fit),col=2,type='b',pch=16,xaxt='n',las=1)
+lines(micro_p,pch=16,type='b')
+legend("topright",bty='n',legend=c("Micro_p"))
+plot(c(cpue,proj_cpue$fit),col=2,type='b',pch=16,las=1)
+lines(cpue,pch=16,type='b')
+polygon(x=c((101:200),(200:101)),y=c(plot_cpue_se_up,rev(plot_cpue_se_dn)),
+        col='#ff000033',border=NA)
+legend("topleft",bty='n',legend=c("CPUE"))
+
+        
+```
+
